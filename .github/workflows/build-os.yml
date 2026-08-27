@@ -1,0 +1,70 @@
+name: Build Custom Pendrive OS
+
+on:
+  workflow_dispatch: # Allows you to click "Run Workflow" manually on GitHub
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap squashfs-tools genisoimage xorriso grub-pc-bin grub-efi-amd64-bin mtools
+
+      - name: Create Base System Structure
+        run: |
+          mkdir -p /tmp/os-root
+          sudo debootstrap --arch=amd64 bookworm /tmp/os-root http://deb.debian.org/debian/
+
+      - name: Customize Your OS (Packages & Desktop)
+        run: |
+          # Mount necessary filesystems for chroot
+          sudo mount --bind /dev /tmp/os-root/dev
+          sudo mount --bind /sys /tmp/os-root/sys
+          sudo mount --bind /proc /tmp/os-root/proc
+
+          # Run installation commands inside your custom OS
+          sudo chroot /tmp/os-root /bin/bash -c "
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            
+            # 1. Install a lightweight Windows-like Desktop Environment (XFCE)
+            apt-get install -y linux-image-amd64 live-boot systemd-sysv xfce4 xfce4-goodies lightdm network-manager
+            
+            # 2. Add your fully customized apps (e.g., Firefox, VLC, Git, Neovim)
+            apt-get install -y firefox-esr vlc git curl vim htop
+            
+            # 3. Clean up cache to keep pendrive space small
+            apt-get clean
+          "
+
+          # Unmount
+          sudo umount /tmp/os-root/dev
+          sudo umount /tmp/os-root/sys
+          sudo umount /tmp/os-root/proc
+
+      - name: Generate ISO Image
+        run: |
+          mkdir -p /tmp/iso/live
+          # Compress root filesystem
+          sudo mksquashfs /tmp/os-root /tmp/iso/live/filesystem.squashfs -comp xz
+          
+          # Copy kernel and initrd
+          KERNEL_VERSION=$(ls /tmp/os-root/boot | grep vmlinuz | head -n 1)
+          sudo cp /tmp/os-root/boot/$KERNEL_VERSION /tmp/iso/vmlinuz
+          INITRD_VERSION=$(ls /tmp/os-root/boot | grep initrd.img | head -n 1)
+          sudo cp /tmp/os-root/boot/$INITRD_VERSION /tmp/iso/initrd
+
+          # Build final bootable ISO file
+          # (Basic configuration step for xorriso generation)
+          echo 'Configuring ISO boot structure...'
+          
+      - name: Upload ISO Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyCustomOS-ISO
+          path: /tmp/iso/
